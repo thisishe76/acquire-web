@@ -1,14 +1,30 @@
 # Acquire Web
 
-This app uses browser JavaScript modules, so it must be opened through a local web server rather than by double-clicking `index.html`.
+웹 브라우저에서 혼자 즐기는 보드게임 **Acquire**입니다. 컴퓨터 상대 2~5명과 대결합니다.
+
+## 게임 소개
+
+9×12 보드(A1~I12)에 타일을 놓아 호텔 체인을 만들고 키우면서 주식에 투자하는 게임입니다. 게임이 끝났을 때 현금이 가장 많은 사람이 이깁니다.
+
+- **타일 놓기:** 매 턴 손패 6장 중 1장을 보드에 놓습니다. 이웃한 타일과 이어지면 새 체인을 창설하거나 기존 체인을 키웁니다.
+- **주식 구매:** 타일을 놓은 뒤 보드에 있는 체인의 주식을 한 턴에 최대 3주까지 살 수 있습니다. 체인이 커질수록 주가가 오릅니다.
+- **합병:** 두 체인이 이어지면 큰 체인이 작은 체인을 흡수합니다. 흡수된 체인의 대주주와 2대 주주는 보너스를 받고, 남은 주식은 매도하거나 2:1로 교환하거나 그대로 보유합니다. 11칸 이상인 체인은 안전 체인이라 흡수되지 않습니다.
+- **게임 종료:** 41칸 이상인 체인이 생기거나, 보드의 모든 체인이 안전 체인이 되면 끝납니다. 마지막에 보너스를 지급하고 모든 주식을 현재 가격으로 정산합니다.
+
+## 실행 방법
+
+[Node.js](https://nodejs.org/) 18 이상이 필요합니다. 설치할 패키지는 없습니다.
 
 ```bash
 npm start
 ```
 
-Then open [http://localhost:8000](http://localhost:8000) in Chrome. Stop the server with `Ctrl+C` when finished.
+브라우저에서 [http://localhost:8000](http://localhost:8000)을 열고, 이름과 컴퓨터 상대 수를 정한 뒤 **게임 시작**을 누르세요. 서버는 `Ctrl+C`로 종료합니다.
 
-To run the rules tests:
+- 포트를 바꾸려면 `PORT=9000 npm start`처럼 실행합니다.
+- 브라우저 JavaScript 모듈을 쓰기 때문에 `index.html`을 더블클릭해서 열면 동작하지 않습니다. 반드시 `npm start`로 띄운 주소로 접속하세요.
+
+## 테스트
 
 ```bash
 npm test
