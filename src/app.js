@@ -1,8 +1,12 @@
+// Browser UI for the Acquire engine: renders game state as HTML and turns clicks into engine calls.
+// All rules live in engine.js; this file only keeps view state (selection, open modal, last error).
+
 import { AcquireGame, COMPANIES, priceFor, tileName } from "./engine.js";
 
 const MAX_SHARES_PER_TURN = 3;
 const AI_COUNT_OPTIONS = [2, 3, 4, 5];
 const DEFAULT_AI_COUNT = 3;
+// Short hint shown under each hand tile, keyed by the engine's evaluate() result type.
 const MOVE_LABELS = { isolated: "고립", grow: "확장", found: "창설", merge: "합병", invalid: "불가" };
 const DEAD_TILE_LABEL = "교체 예정"; // permanently unplayable; swapped for a new tile at the end of the turn
 
@@ -12,6 +16,7 @@ const app = document.querySelector("#app");
 // UI state (game rules and data live in the engine)
 // ---------------------------------------------------------------------------
 
+// A single game instance for the page; "새 게임" calls game.reset() instead of replacing it.
 let game = new AcquireGame();
 let selectedTile = null; // tile the human has highlighted but not yet placed
 let buySelection = null; // null = buy modal closed; otherwise chain ids picked so far
@@ -40,8 +45,10 @@ const chainColor = id => COMPANIES[id][1];
 const humanPlayer = () => game.players[0];
 const isHumanTurn = phase => game.phase === phase && game.current.human;
 
+// Label for a hand tile; permanently unplayable tiles get their own label instead of "불가".
 const moveLabel = evaluation => evaluation.permanent ? DEAD_TILE_LABEL : MOVE_LABELS[evaluation.type];
 
+/** Whether a board cell should be highlighted and clickable: only on the human's tile phase. */
 function isPlayableTile(tile) {
   return isHumanTurn("tile") && game.current.hand.includes(tile) && game.evaluate(tile).type !== "invalid";
 }
@@ -55,10 +62,15 @@ function buyableChains() {
 // Screens
 // ---------------------------------------------------------------------------
 
+/**
+ * Rebuilds the whole UI from the current state. Call after every state change.
+ * Event listeners are delegated on #app (see the bottom of the file), so nothing needs rebinding.
+ */
 function render() {
   app.innerHTML = game.phase === "setup" ? renderSetup() : renderGame();
 }
 
+/** Start screen. The form is handled by FORMS.setup. */
 function renderSetup() {
   const aiOptions = AI_COUNT_OPTIONS.map(count =>
     html`<option value="${count}" ${count === DEFAULT_AI_COUNT && "selected"}>${count}명</option>`);
@@ -75,6 +87,10 @@ function renderSetup() {
     </section>`;
 }
 
+/**
+ * Main screen: board on the left, info panels on the right, and at most one modal on top.
+ * Keep renderLog() last in the aside: the CSS (`.side > :last-child`) stretches the last panel full width.
+ */
 function renderGame() {
   return html`
     <div class="app">
@@ -96,6 +112,7 @@ function renderGame() {
 // Main layout sections
 // ---------------------------------------------------------------------------
 
+/** Title, whose turn it is, and the number of tiles left in the deck. */
 function renderHeader() {
   const status = game.phase === "results" ? "최종 결과" : `${escapeHtml(game.current.name)}의 차례`;
   return html`
@@ -108,6 +125,7 @@ function renderHeader() {
     </header>`;
 }
 
+/** Board, the action buttons for the current phase, and the last engine error (if any). */
 function renderBoardCard() {
   return html`
     <section class="card">
@@ -125,6 +143,10 @@ function renderBoard() {
     </div>`;
 }
 
+/**
+ * One board cell. Chain cells are painted in the chain's color. Only playable cells are enabled;
+ * clicking one just selects it — placing happens with the "선택한 타일 놓기" button.
+ */
 function renderBoardTile(cell, tile) {
   const isChain = Number.isInteger(cell);
   const playable = isPlayableTile(tile);
@@ -150,6 +172,7 @@ function renderTurnActions() {
   return "";
 }
 
+/** All seven chains with size, share price and the shares left in the bank. */
 function renderCompanies() {
   const cards = game.companies.map(chain => {
     const detail = chain.active
@@ -164,6 +187,10 @@ function renderCompanies() {
     </section>`;
 }
 
+/**
+ * The human's cash, hand and shares. Hand tiles can be selected during any tile phase, including
+ * unplayable ones; the engine rejects placing those and its message is shown as the notice.
+ */
 function renderMyAssets() {
   const me = humanPlayer();
   const hand = me.hand.map(tile => html`
@@ -181,6 +208,7 @@ function renderMyAssets() {
     </section>`;
 }
 
+/** Everyone's cash; the player whose turn it is gets the "current" highlight. */
 function renderPlayers() {
   const rows = game.players.map((player, i) => html`
     <div class="${classNames("player", i === game.turn && "current")}">
@@ -193,6 +221,7 @@ function renderPlayers() {
     </section>`;
 }
 
+/** Game log, newest entry first (the engine keeps the latest 60). */
 function renderLog() {
   return html`
     <section class="card">
@@ -205,6 +234,8 @@ function renderLog() {
 // Modals (one per phase that needs a decision from the human)
 // ---------------------------------------------------------------------------
 
+// Modal to show for each phase. "found" and "mergeWinner" only stay open on the human's turn,
+// because bots make those choices inside the engine before control returns to the UI.
 const MODALS = {
   found: renderFoundModal,
   mergeWinner: renderMergeWinnerModal,
@@ -213,10 +244,12 @@ const MODALS = {
   results: renderResultsModal,
 };
 
+/** The modal for the current phase, or "" if this phase needs none. */
 function renderModal() {
   return MODALS[game.phase]?.() ?? "";
 }
 
+/** Shared modal frame (backdrop + dialog) around `content`. */
 function modal(title, content) {
   return html`
     <div class="modal-backdrop">
@@ -227,6 +260,7 @@ function modal(title, content) {
     </div>`;
 }
 
+/** Chain button used by both the founding and the merger-winner modals ("choose-chain" action). */
 function chainChoiceButton(id, label = chainName(id)) {
   return html`<button class="choice" data-action="choose-chain" data-chain="${id}" style="border-left:5px solid ${chainColor(id)}">${label}</button>`;
 }
@@ -244,6 +278,11 @@ function renderMergeWinnerModal() {
     <div class="choice-grid">${choices}</div>`);
 }
 
+/**
+ * The human's sell / exchange decision for the defunct chain being resolved. Shares that are neither
+ * sold nor exchanged are kept. The inputs' max values are only hints: the engine validates that
+ * sell + 2 × exchange does not exceed the shares owned.
+ */
 function renderMergerSharesModal() {
   const { defunct, winner } = game.pending;
   const owned = humanPlayer().shares[defunct];
@@ -264,6 +303,11 @@ function renderMergerSharesModal() {
     </form>`);
 }
 
+/**
+ * Share purchase: each click adds one share (one chain id) to buySelection, up to 3.
+ * Chains are listed if one share is affordable; the total is checked by the engine on confirm.
+ * If it is rejected, act() keeps the modal open with the error so the player can cancel and retry.
+ */
 function renderBuyModal() {
   if (!isHumanTurn("buy") || buySelection === null) return "";
   const total = buySelection.reduce((sum, id) => sum + priceFor(game.companies[id]), 0);
@@ -282,6 +326,7 @@ function renderBuyModal() {
     </div>`);
 }
 
+/** Final ranking by cash; by now the engine has paid final bonuses and sold every share. */
 function renderResultsModal() {
   const ranked = [...game.players].sort((a, b) => b.cash - a.cash);
   const rows = ranked.map((player, i) =>
@@ -316,6 +361,8 @@ function act(move) {
   render();
 }
 
+// Click handlers keyed by a button's data-action. Each receives the clicked button
+// (data-tile / data-chain carry the arguments). UI-only actions re-render directly; moves go through act().
 const ACTIONS = {
   "select-tile": button => { selectedTile = Number(button.dataset.tile); notice = ""; render(); },
   "place-tile": () => act(() => game.chooseTile(selectedTile)),
@@ -333,19 +380,23 @@ const ACTIONS = {
   "restart": () => { game.reset(); selectedTile = null; render(); },
 };
 
+// Submit handlers keyed by a form's data-form; each receives the form's FormData.
 const FORMS = {
   "setup": data => { game.start(data.get("name"), Number(data.get("ai"))); selectedTile = null; render(); },
   "merger-shares": data => act(() => game.resolveMergerShares({ sell: Number(data.get("sell")), exchange: Number(data.get("exchange")) })),
 };
 
+// closest() also catches clicks on elements inside a button (e.g. a hand tile's <small> label).
 app.addEventListener("click", event => {
   const button = event.target.closest("[data-action]");
   if (button && !button.disabled) ACTIONS[button.dataset.action](button);
 });
 
+// Forms never navigate; they are handled entirely in FORMS.
 app.addEventListener("submit", event => {
   event.preventDefault();
   FORMS[event.target.dataset.form](new FormData(event.target));
 });
 
+// First paint: the setup screen.
 render();
