@@ -3,8 +3,8 @@ export const COMPANIES = [
   ["Fusion", "#42b883", 200], ["America", "#4d96ff", 200], ["Phoenix", "#c77dff", 300],
   ["Quantum", "#27c4c9", 300],
 ];
-export const ROWS = 12;
-export const COLS = 9;
+export const ROWS = 9;
+export const COLS = 12;
 const EMPTY = null;
 
 export function tileName(tile) {
@@ -64,10 +64,27 @@ export class AcquireGame {
     if (!chains.length && loose) return this.availableFounders().length ? { type: "found" } : { type: "invalid", reason: "창설할 수 있는 체인이 없습니다." };
     if (chains.length === 1) return { type: "grow", chain: chains[0] };
     const ordered = chains.sort((a, b) => this.companies[b].size - this.companies[a].size || a - b);
-    if (ordered.slice(1).some(id => this.companies[id].size >= 11)) return { type: "invalid", reason: "안전한 체인은 합병할 수 없습니다." };
+    if (ordered.slice(1).some(id => this.companies[id].size >= 11)) return { type: "invalid", permanent: true, reason: "안전한 체인은 합병할 수 없습니다." };
     return { type: "merge", chains: ordered };
   }
 
+  /** Tiles that would merge two safe chains. Safe chains never shrink, so these can never be played. */
+  deadTiles(player) { return player.hand.filter(tile => this.evaluate(tile, player).permanent); }
+  /** End-of-turn draw: discard permanently unplayable tiles (out of the game) and draw replacements. */
+  refillHand(player) {
+    this.drawToSix(player);
+    for (let dead = this.deadTiles(player); dead.length; dead = this.deadTiles(player)) {
+      player.hand = player.hand.filter(tile => !dead.includes(tile));
+      this.addLog(`${player.name}: 놓을 수 없는 타일 ${dead.map(tileName).join(", ")}을(를) 버리고 새로 뽑습니다.`);
+      this.drawToSix(player);
+    }
+  }
+  hasPlayableTile(player = this.current) { return player.hand.some(tile => this.evaluate(tile, player).type !== "invalid"); }
+  passTile() {
+    if (this.phase !== "tile") throw new Error("지금은 타일을 놓을 차례가 아닙니다.");
+    if (this.hasPlayableTile()) throw new Error("놓을 수 있는 타일이 있습니다.");
+    this.addLog(`${this.current.name}: 놓을 수 있는 타일이 없어 건너뜁니다.`); this.afterTile();
+  }
   availableFounders() { return this.companies.filter(c => !c.active).map(c => c.id); }
   chooseTile(tile) {
     if (this.phase !== "tile") throw new Error("지금은 타일을 놓을 차례가 아닙니다.");
@@ -130,7 +147,7 @@ export class AcquireGame {
     if (this.phase !== "mergerShares") throw new Error("처리할 합병 주식이 없습니다.");
     const { defunct, winner } = this.pending, player = this.players[0], owned = player.shares[defunct];
     if (!Number.isInteger(sell) || !Number.isInteger(exchange) || sell < 0 || exchange < 0 || sell + exchange * 2 > owned || exchange > this.companies[winner].shares) throw new Error("유효하지 않은 주식 처리입니다.");
-    this.transferShares(player, defunct, winner, sell, exchange); this.finishDefunct();
+    this.transferShares(player, defunct, winner, sell, exchange); this.resolveDefunctForBots(); this.finishDefunct();
   }
   transferShares(player, defunct, winner, sell, exchange) {
     player.cash += sell * priceFor(this.companies[defunct]); player.shares[defunct] -= sell; this.companies[defunct].shares += sell;
@@ -162,16 +179,16 @@ export class AcquireGame {
   }
   averagePrice() { const active = this.activeChains().filter(c => c.shares); return active.length ? active.reduce((n, c) => n + priceFor(c), 0) / active.length : 0; }
   isGameOver() { return this.activeChains().some(c => c.size > 40) || (this.activeChains().length && this.activeChains().every(c => c.size >= 11)) || (this.deck.length === 0 && this.players.every(p => p.hand.every(t => this.evaluate(t, p).type === "invalid"))); }
-  endTurn() { if (this.isGameOver()) return this.finishGame(); this.drawToSix(this.current); this.turn = (this.turn + 1) % this.players.length; this.phase = "tile"; this.runBots(); }
+  endTurn() { if (this.isGameOver()) return this.finishGame(); this.refillHand(this.current); this.turn = (this.turn + 1) % this.players.length; this.phase = "tile"; this.runBots(); }
   finishGame() { for (const chain of this.activeChains()) { this.payBonuses(chain.id); for (const p of this.players) p.cash += p.shares[chain.id] * priceFor(chain); } this.phase = "results"; this.addLog("게임이 종료되었습니다."); }
 
   botAction() {
     const player = this.current; const options = player.hand.map(tile => ({ tile, evaluation: this.evaluate(tile, player) })).filter(x => x.evaluation.type !== "invalid");
-    if (!options.length) { this.phase = "buy"; return this.botBuy(); }
+    if (!options.length) return this.passTile();
     const rank = { merge: 6, found: 5, grow: 4, isolated: 3 }; options.sort((a, b) => (rank[b.evaluation.type] - rank[a.evaluation.type]) || a.tile - b.tile); const chosen = options[0];
     this.chooseTile(chosen.tile); if (this.phase === "found") this.chooseFounder(this.availableFounders()[0]); if (this.phase === "mergeWinner") this.chooseMergeWinner(this.pending.choices[0]);
   }
-  botBuy() { const choices = this.activeChains().filter(c => c.shares && priceFor(c) <= this.current.cash).sort((a, b) => priceFor(a) - priceFor(b)); const buys = choices.slice(0, 3).map(c => c.id); this.finishBuy(buys); }
+  botBuy() { const choices = this.activeChains().filter(c => c.shares && priceFor(c) <= this.current.cash).sort((a, b) => priceFor(a) - priceFor(b)); let budget = this.current.cash; const buys = []; for (const c of choices) { if (buys.length === 3) break; if (priceFor(c) <= budget) { buys.push(c.id); budget -= priceFor(c); } } this.finishBuy(buys); }
   runBots() {
     let guard = 50;
     while (!this.current.human && (this.phase === "tile" || this.phase === "buy") && guard--) {
